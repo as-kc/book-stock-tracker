@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+src/book_stock_tracker/__init__.py
+src/book_stock_tracker/__main__.py
+src/book_stock_tracker/app.py
+src/book_stock_tracker/services.py
+src/book_stock_tracker/storage.py
+src/book_stock_tracker.egg-info/PKG-INFO
+src/book_stock_tracker.egg-info/SOURCES.txt
+src/book_stock_tracker.egg-info/dependency_links.txt
+src/book_stock_tracker.egg-info/entry_points.txt
+src/book_stock_tracker.egg-info/requires.txt
+src/book_stock_tracker.egg-info/top_level.txt

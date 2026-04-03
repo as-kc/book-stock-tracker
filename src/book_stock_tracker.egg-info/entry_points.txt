@@ -1,0 +1,2 @@
+[console_scripts]
+book-stock-tracker = book_stock_tracker.__main__:main
