@@ -47,8 +47,155 @@ class SuggestionOption:
     is_create_new: bool = False
 
 
-class LineCellInput(Input):
-    """An input widget that knows which report-line cell it belongs to."""
+class CompactEditorInput(Input):
+    """A compact single-line input used by the inline report editor."""
+
+    DEFAULT_CSS = """
+    CompactEditorInput {
+        background: $surface;
+        color: $foreground;
+        padding: 0 1;
+        border: none;
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        scrollbar-size-horizontal: 0;
+    }
+
+    CompactEditorInput:focus {
+        background: $foreground 10%;
+    }
+    """
+
+    def on_mount(self) -> None:
+        self.cursor_position = len(self.value)
+
+
+class ReportFieldInput(CompactEditorInput):
+    """Compact editor input for a report header field."""
+
+    def __init__(
+        self,
+        *,
+        field_name: str,
+        value: str,
+        placeholder: str,
+        input_id: str,
+    ) -> None:
+        super().__init__(
+            value=value,
+            placeholder=placeholder,
+            id=input_id,
+            classes="compact-field-editor",
+        )
+        self.field_name = field_name
+
+    def on_focus(self) -> None:
+        self.cursor_position = len(self.value)
+
+    def on_key(self, event: events.Key) -> None:
+        app = self.app
+        if not isinstance(app, BookStockTrackerApp):
+            return
+
+        if event.key == "tab":
+            if self.field_name == "title":
+                app.query_one("#report-date", CompactReportField).focus_editor()
+            else:
+                app.query_one(ReportLinesEditor).focus_from_report_header()
+            event.prevent_default()
+            event.stop()
+            return
+        if event.key == "shift+tab":
+            if self.field_name == "date":
+                app.query_one("#report-title", CompactReportField).focus_editor()
+            else:
+                app.query_one("#report-table", DataTable).focus()
+            event.prevent_default()
+            event.stop()
+            return
+        if event.key == "escape" and app.query_one(ReportLinesEditor).cancel_inline_state():
+            event.prevent_default()
+            event.stop()
+            return
+
+    def on_blur(self) -> None:
+        parent = self.parent
+        if isinstance(parent, CompactReportField):
+            parent.set_editing(False)
+
+
+class CompactReportField(Widget):
+    """Compact report-header field that swaps into an inline editor on focus."""
+
+    can_focus = True
+
+    def __init__(self, *, field_name: str, placeholder: str, field_id: str) -> None:
+        super().__init__(id=field_id, classes="compact-report-field")
+        self.field_name = field_name
+        self.placeholder = placeholder
+        self._value = ""
+
+    def compose(self) -> ComposeResult:
+        yield Static("", classes="compact-field-display")
+        yield ReportFieldInput(
+            field_name=self.field_name,
+            value=self._value,
+            placeholder=self.placeholder,
+            input_id=f"{self.id}-editor",
+        )
+
+    def on_mount(self) -> None:
+        self.set_editing(False)
+        self._refresh_display()
+
+    def on_focus(self) -> None:
+        self.focus_editor()
+
+    @property
+    def value(self) -> str:
+        return self._value
+
+    @value.setter
+    def value(self, new_value: str) -> None:
+        self._value = new_value
+        if self.is_mounted:
+            self.query_one(ReportFieldInput).value = new_value
+            self._refresh_display()
+
+    def focus_editor(self) -> None:
+        self.set_editing(True)
+        editor = self.query_one(ReportFieldInput)
+        editor.cursor_position = len(editor.value)
+        self.call_after_refresh(editor.focus)
+
+    def set_editing(self, editing: bool) -> None:
+        display = self.query_one(".compact-field-display", Static)
+        editor = self.query_one(ReportFieldInput)
+        display.display = not editing
+        editor.display = editing
+        if editing:
+            self.add_class("editing")
+        else:
+            self.remove_class("editing")
+
+    @on(Input.Changed, ".compact-field-editor")
+    def handle_editor_changed(self, event: Input.Changed) -> None:
+        self._value = event.value
+        self._refresh_display()
+
+    def _refresh_display(self) -> None:
+        display = self.query_one(".compact-field-display", Static)
+        text = self._value or self.placeholder
+        display.update(text)
+        if self._value:
+            display.remove_class("empty")
+        else:
+            display.add_class("empty")
+
+
+class CompactLineInput(CompactEditorInput):
+    """Compact editor input for a report-line cell."""
 
     def __init__(
         self,
@@ -64,19 +211,22 @@ class LineCellInput(Input):
             value=value,
             placeholder=placeholder,
             id=f"cell-{row_key}-{column_name}",
-            classes=f"line-cell {classes}".strip(),
+            classes=f"line-editor {classes}".strip(),
             type=input_type,
         )
         self.row_key = row_key
         self.column_name = column_name
 
-    def on_mount(self) -> None:
-        self.cursor_position = len(self.value)
-
     def on_focus(self) -> None:
+        self.cursor_position = len(self.value)
         editor = self._find_editor()
         if editor is not None:
             editor.handle_cell_focused(self)
+
+    def on_blur(self) -> None:
+        cell = self._find_cell()
+        if cell is not None:
+            cell.set_editing(False)
 
     def on_key(self, event: events.Key) -> None:
         editor = self._find_editor()
@@ -86,20 +236,16 @@ class LineCellInput(Input):
         if event.key == "tab":
             if self.column_name == "out_qty":
                 editor.advance_after_out_tab(self.row_key)
-                event.prevent_default()
-                event.stop()
-                return
-            editor.focus_relative(self.row_key, self.column_name, 1)
+            else:
+                editor.focus_relative(self.row_key, self.column_name, 1)
             event.prevent_default()
             event.stop()
             return
         if event.key == "shift+tab":
             if self.column_name == "name":
                 editor.reverse_before_name_shift_tab(self.row_key)
-                event.prevent_default()
-                event.stop()
-                return
-            editor.focus_relative(self.row_key, self.column_name, -1)
+            else:
+                editor.focus_relative(self.row_key, self.column_name, -1)
             event.prevent_default()
             event.stop()
             return
@@ -123,22 +269,22 @@ class LineCellInput(Input):
             event.prevent_default()
             event.stop()
             return
+        if event.key == "left" and self.column_name != "name":
+            editor.focus_relative(self.row_key, self.column_name, -1)
+            event.prevent_default()
+            event.stop()
+            return
+        if event.key == "right" and self.column_name != "out_qty":
+            editor.focus_relative(self.row_key, self.column_name, 1)
+            event.prevent_default()
+            event.stop()
+            return
         if event.key == "escape" and editor.cancel_inline_state():
             event.prevent_default()
             event.stop()
             return
         if event.key == "d" and self.column_name != "name":
             editor.arm_or_delete_selected_row()
-            event.prevent_default()
-            event.stop()
-            return
-        if event.key == "left" and self.cursor_position == 0 and self.column_name != "name":
-            editor.focus_relative(self.row_key, self.column_name, -1)
-            event.prevent_default()
-            event.stop()
-            return
-        if event.key == "right" and self.cursor_position == len(self.value) and self.column_name != "out_qty":
-            editor.focus_relative(self.row_key, self.column_name, 1)
             event.prevent_default()
             event.stop()
 
@@ -150,19 +296,82 @@ class LineCellInput(Input):
             node = node.parent
         return None
 
+    def _find_cell(self) -> CompactLineCell | None:
+        node = self.parent
+        while node is not None:
+            if isinstance(node, CompactLineCell):
+                return node
+            node = node.parent
+        return None
 
-class ReportDateInput(Input):
-    """Date input that tabs directly into the report line editor."""
 
-    def on_key(self, event: events.Key) -> None:
-        if event.key != "tab":
+class CompactLineCell(Widget):
+    """Compact display cell that swaps to an editor while focused."""
+
+    def __init__(
+        self,
+        *,
+        row_key: str,
+        column_name: str,
+        value: str,
+        placeholder: str,
+        input_type: str = "text",
+        classes: str = "",
+    ) -> None:
+        super().__init__(id=f"cellwrap-{row_key}-{column_name}", classes=f"compact-line-cell {classes}".strip())
+        self.row_key = row_key
+        self.column_name = column_name
+        self.placeholder = placeholder
+        self.input_type = input_type
+        self._value = value
+
+    def compose(self) -> ComposeResult:
+        yield Static("", classes="cell-display")
+        yield CompactLineInput(
+            row_key=self.row_key,
+            column_name=self.column_name,
+            value=self._value,
+            placeholder=self.placeholder,
+            input_type=self.input_type,
+            classes="name-cell" if self.column_name == "name" else "qty-cell",
+        )
+
+    def on_mount(self) -> None:
+        self.set_editing(False)
+        self.set_value(self._value)
+
+    @property
+    def value(self) -> str:
+        return self._value
+
+    def set_value(self, value: str) -> None:
+        self._value = value
+        if not self.is_mounted:
             return
-        app = self.app
-        if not isinstance(app, BookStockTrackerApp):
-            return
-        app.query_one(ReportLinesEditor).focus_from_report_header()
-        event.prevent_default()
-        event.stop()
+        display = self.query_one(".cell-display", Static)
+        editor = self.query_one(CompactLineInput)
+        editor.value = value
+        display.update(value)
+        if value:
+            display.remove_class("empty")
+        else:
+            display.add_class("empty")
+
+    def set_editing(self, editing: bool) -> None:
+        display = self.query_one(".cell-display", Static)
+        editor = self.query_one(CompactLineInput)
+        display.display = not editing
+        editor.display = editing
+        if editing:
+            self.add_class("editing")
+        else:
+            self.remove_class("editing")
+
+    def focus_editor(self) -> None:
+        self.set_editing(True)
+        editor = self.query_one(CompactLineInput)
+        editor.cursor_position = len(editor.value)
+        self.call_after_refresh(editor.focus)
 
 
 class ReportLineRow(Horizontal):
@@ -185,14 +394,14 @@ class ReportLineRow(Horizontal):
         return self.row_key_from_state(self.state)
 
     def compose(self) -> ComposeResult:
-        yield LineCellInput(
+        yield CompactLineCell(
             row_key=self.row_key,
             column_name="name",
             value=self.state.item_name,
             placeholder="Item name",
             classes="name-cell",
         )
-        yield LineCellInput(
+        yield CompactLineCell(
             row_key=self.row_key,
             column_name="in_qty",
             value=self.state.in_qty,
@@ -200,7 +409,7 @@ class ReportLineRow(Horizontal):
             input_type="integer",
             classes="qty-cell",
         )
-        yield LineCellInput(
+        yield CompactLineCell(
             row_key=self.row_key,
             column_name="out_qty",
             value=self.state.out_qty,
@@ -366,7 +575,7 @@ class ReportLinesEditor(Widget):
     def reverse_before_name_shift_tab(self, row_key: str) -> None:
         previous_row_key = self._previous_row_key(row_key)
         if previous_row_key is None:
-            self.app.query_one("#report-date", Input).focus()
+            self.app.query_one("#report-date", CompactReportField).focus_editor()
             return
         self.focus_cell(previous_row_key, "out_qty")
 
@@ -381,14 +590,12 @@ class ReportLinesEditor(Widget):
         self.focus_cell(target_row_key, column_name)
 
     def focus_cell(self, row_key: str, column_name: str) -> None:
-        selector = f"#cell-{row_key}-{column_name}"
         try:
-            input_widget = self.query_one(selector, LineCellInput)
+            cell_widget = self.query_one(f"#cellwrap-{row_key}-{column_name}", CompactLineCell)
         except Exception:
             return
-        input_widget.focus()
-        input_widget.cursor_position = len(input_widget.value)
-        input_widget.scroll_visible(immediate=True, animate=False)
+        cell_widget.focus_editor()
+        cell_widget.scroll_visible(immediate=True, animate=False)
         self.active_row_key = row_key
         self.active_column = column_name
         self._hide_suggestions()
@@ -414,7 +621,7 @@ class ReportLinesEditor(Widget):
             handled = True
         return handled
 
-    def handle_cell_focused(self, cell: LineCellInput) -> None:
+    def handle_cell_focused(self, cell: CompactLineInput) -> None:
         if self.delete_armed_row_key is not None:
             self.delete_armed_row_key = None
             self._apply_delete_state()
@@ -422,10 +629,10 @@ class ReportLinesEditor(Widget):
         self.active_column = cell.column_name
         self._hide_suggestions()
 
-    @on(Input.Changed, ".line-cell")
+    @on(Input.Changed, ".line-editor")
     def handle_cell_changed(self, event: Input.Changed) -> None:
         cell = event.input
-        if not isinstance(cell, LineCellInput):
+        if not isinstance(cell, CompactLineInput):
             return
         if cell.column_name == "name" and self._suppress_name_change_row == cell.row_key:
             self._suppress_name_change_row = None
@@ -435,15 +642,16 @@ class ReportLinesEditor(Widget):
             self._apply_delete_state()
         self.active_row_key = cell.row_key
         self.active_column = cell.column_name
+        self._update_row_state(cell.row_key, cell.column_name, event.value)
         if cell.column_name == "name":
             self._refresh_suggestions(event.value)
         else:
             self._hide_suggestions()
 
-    @on(Input.Submitted, ".line-cell")
+    @on(Input.Submitted, ".line-editor")
     def handle_cell_submitted(self, event: Input.Submitted) -> None:
         cell = event.input
-        if not isinstance(cell, LineCellInput):
+        if not isinstance(cell, CompactLineInput):
             return
         if self.delete_armed_row_key == cell.row_key and cell.column_name != "name":
             self._delete_row(cell.row_key)
@@ -516,17 +724,14 @@ class ReportLinesEditor(Widget):
         self.load_report(self.current_report_id)
 
     def _get_row_values(self, row_key: str) -> tuple[str, str, str] | None:
-        try:
-            item_name = self.query_one(f"#cell-{row_key}-name", LineCellInput).value
-            in_qty = self.query_one(f"#cell-{row_key}-in_qty", LineCellInput).value
-            out_qty = self.query_one(f"#cell-{row_key}-out_qty", LineCellInput).value
-        except Exception:
+        state = self._state_for_row_key(row_key)
+        if state is None:
             return None
-        return item_name, in_qty, out_qty
+        return state.item_name, state.in_qty, state.out_qty
 
     def _accept_name_selection(self, row_key: str) -> bool:
         try:
-            name_input = self.query_one(f"#cell-{row_key}-name", LineCellInput)
+            name_input = self.query_one(f"#cell-{row_key}-name", CompactLineInput)
         except Exception:
             return False
         value = name_input.value.strip()
@@ -542,6 +747,7 @@ class ReportLinesEditor(Widget):
         self._suppress_name_change_row = row_key
         name_input.value = value
         name_input.cursor_position = len(value)
+        self._update_row_state(row_key, "name", value)
         self._hide_suggestions()
         self.focus_cell(row_key, "in_qty")
         return True
@@ -670,6 +876,29 @@ class ReportLinesEditor(Widget):
             else:
                 row.remove_class("delete-armed")
 
+    def _state_for_row_key(self, row_key: str) -> EditableLineState | None:
+        if row_key == "draft":
+            return self.draft_state
+        for state in self.line_states:
+            if state.line_id is not None and str(state.line_id) == row_key:
+                return state
+        return None
+
+    def _update_row_state(self, row_key: str, column_name: str, value: str) -> None:
+        state = self._state_for_row_key(row_key)
+        if state is None:
+            return
+        if column_name == "name":
+            state.item_name = value
+        elif column_name == "in_qty":
+            state.in_qty = value
+        else:
+            state.out_qty = value
+        try:
+            self.query_one(f"#cellwrap-{row_key}-{column_name}", CompactLineCell).set_value(value)
+        except Exception:
+            pass
+
 
 class BookStockTrackerApp(App[None]):
     """The main stock tracking application."""
@@ -713,11 +942,10 @@ class BookStockTrackerApp(App[None]):
         width: 67%;
     }
 
-    #report-title, #report-date {
-        height: 3;
-        min-height: 3;
+    #report-title, #report-date, .compact-report-field {
+        height: 1;
+        min-height: 1;
         margin-top: 0;
-        padding: 0 1;
     }
 
     DataTable {
@@ -731,11 +959,11 @@ class BookStockTrackerApp(App[None]):
     }
 
     #report-lines-header, .report-line-row {
-        height: auto;
+        height: 1;
         width: 1fr;
     }
 
-    .line-header, .line-cell {
+    .line-header, .compact-line-cell {
         margin-right: 1;
     }
 
@@ -753,6 +981,25 @@ class BookStockTrackerApp(App[None]):
         width: 12;
     }
 
+    .compact-field-display, .cell-display {
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+    }
+
+    .compact-field-display.empty, .cell-display.empty {
+        color: $text-disabled;
+    }
+
+    .compact-line-cell {
+        height: 1;
+        min-height: 1;
+    }
+
+    .compact-line-cell.editing, .compact-report-field.editing {
+        background: $foreground 10%;
+    }
+
     #report-lines-container {
         height: 1fr;
     }
@@ -766,20 +1013,14 @@ class BookStockTrackerApp(App[None]):
         padding: 0;
     }
 
-    .report-line-row .line-cell {
-        height: 3;
-        min-height: 3;
-        padding: 0 1;
-        margin-top: 0;
-    }
-
-    .report-line-row.delete-armed .line-cell {
-        border: tall $error;
+    .report-line-row.delete-armed .cell-display,
+    .report-line-row.delete-armed .line-editor {
+        background: $error 20%;
     }
 
     #item-suggestions {
-        height: 7;
-        margin-top: 1;
+        height: 6;
+        margin-top: 0;
     }
 
     #report-status, #report-help, #stock-help {
@@ -819,8 +1060,8 @@ class BookStockTrackerApp(App[None]):
                         yield Static("Use N to create a report and Enter to open one.", id="report-list-help")
                     with Vertical(id="report-editor-panel"):
                         yield Static("Report editor", id="editor-title")
-                        yield Input(placeholder="Report title", id="report-title")
-                        yield ReportDateInput(placeholder="YYYY-MM-DD", id="report-date")
+                        yield CompactReportField(field_name="title", placeholder="Report title", field_id="report-title")
+                        yield CompactReportField(field_name="date", placeholder="YYYY-MM-DD", field_id="report-date")
                         yield ReportLinesEditor(
                             self.service,
                             on_status=self._set_status,
@@ -880,8 +1121,8 @@ class BookStockTrackerApp(App[None]):
         if self.current_report_id is None:
             self._set_status("Create or open a report first.")
             return
-        title = self.query_one("#report-title", Input).value
-        report_date = self.query_one("#report-date", Input).value
+        title = self.query_one("#report-title", CompactReportField).value
+        report_date = self.query_one("#report-date", CompactReportField).value
         try:
             updated_report = self.service.update_report(self.current_report_id, title, report_date)
         except ValidationError as exc:
@@ -910,7 +1151,7 @@ class BookStockTrackerApp(App[None]):
     def handle_report_selected(self, event: DataTable.RowSelected) -> None:
         report_id = self._row_key_to_int(event.row_key)
         self._open_report(report_id)
-        self.query_one("#report-title", Input).focus()
+        self.query_one("#report-title", CompactReportField).focus()
 
     def _reload_reports(self, select_report_id: int | None = None) -> None:
         report_table = self.query_one("#report-table", DataTable)
@@ -921,8 +1162,8 @@ class BookStockTrackerApp(App[None]):
 
         if not reports:
             self.current_report_id = None
-            self.query_one("#report-title", Input).value = ""
-            self.query_one("#report-date", Input).value = ""
+            self.query_one("#report-title", CompactReportField).value = ""
+            self.query_one("#report-date", CompactReportField).value = ""
             self.query_one(ReportLinesEditor).load_report(None)
             self._set_status("No reports yet. Press N to create one.")
             return
@@ -942,13 +1183,13 @@ class BookStockTrackerApp(App[None]):
             return
         if (
             self.current_report_id == report.id
-            and self.query_one("#report-title", Input).value == report.title
-            and self.query_one("#report-date", Input).value == report.report_date
+            and self.query_one("#report-title", CompactReportField).value == report.title
+            and self.query_one("#report-date", CompactReportField).value == report.report_date
         ):
             return
         self.current_report_id = report.id
-        self.query_one("#report-title", Input).value = report.title
-        self.query_one("#report-date", Input).value = report.report_date
+        self.query_one("#report-title", CompactReportField).value = report.title
+        self.query_one("#report-date", CompactReportField).value = report.report_date
         self.query_one(ReportLinesEditor).load_report(report.id)
         self._set_status(f"Viewing report: {report.title} ({report.report_date})")
 

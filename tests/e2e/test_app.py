@@ -6,7 +6,14 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import DataTable, OptionList
 
-from book_stock_tracker.app import BookStockTrackerApp, ReportLineRow, ReportLinesEditor
+from book_stock_tracker.app import (
+    BookStockTrackerApp,
+    CompactLineInput,
+    CompactReportField,
+    ReportFieldInput,
+    ReportLineRow,
+    ReportLinesEditor,
+)
 from book_stock_tracker.services import StockTrackerService
 from book_stock_tracker.storage import Database, StockTrackerRepository
 
@@ -216,11 +223,11 @@ async def test_tab_from_report_date_moves_into_first_line_item(db_path: Path):
 
     async with app.run_test() as pilot:
         await create_report_with_inline_line(app, pilot, item_query="delta", in_qty="5")
-        app.query_one("#report-date").focus()
+        app.query_one("#report-date", CompactReportField).focus()
         await pilot.pause()
 
         assert app.focused is not None
-        assert app.focused.id == "report-date"
+        assert app.focused.id == "report-date-editor"
 
         await pilot.press("tab")
         await pilot.pause()
@@ -303,7 +310,7 @@ async def test_shift_tab_from_name_moves_to_previous_row_or_date(db_path: Path):
         await pilot.pause()
 
         assert app.focused is not None
-        assert app.focused.id == "report-date"
+        assert app.focused.id == "report-date-editor"
 
 
 @pytest.mark.asyncio
@@ -348,3 +355,42 @@ async def test_arrow_keys_navigate_between_rows_and_table_scrolls(db_path: Path)
         container = app.query_one("#report-lines-container", VerticalScroll)
         assert container.max_scroll_y > 0
         assert container.scroll_y > 0
+
+
+@pytest.mark.asyncio
+async def test_only_active_line_editor_is_visible(db_path: Path):
+    app = BookStockTrackerApp(db_path=db_path)
+
+    async with app.run_test() as pilot:
+        await create_report_with_inline_line(app, pilot, item_query="alpha", in_qty="2")
+        editor = app.query_one(ReportLinesEditor)
+
+        editor.focus_cell("1", "name")
+        await pilot.pause()
+        visible_editors = [widget.id for widget in app.query(CompactLineInput) if widget.display]
+        assert visible_editors == ["cell-1-name"]
+
+        editor.focus_cell("1", "in_qty")
+        await pilot.pause()
+        visible_editors = [widget.id for widget in app.query(CompactLineInput) if widget.display]
+        assert visible_editors == ["cell-1-in_qty"]
+
+
+@pytest.mark.asyncio
+async def test_report_header_stays_compact_until_focused(db_path: Path):
+    app = BookStockTrackerApp(db_path=db_path)
+
+    async with app.run_test() as pilot:
+        await pilot.press("n")
+        await pilot.pause()
+
+        title_field = app.query_one("#report-title", CompactReportField)
+        title_editor = title_field.query_one(ReportFieldInput)
+        assert title_editor.display is False
+
+        title_field.focus()
+        await pilot.pause()
+
+        assert title_editor.display is True
+        assert app.focused is not None
+        assert app.focused.id == "report-title-editor"
