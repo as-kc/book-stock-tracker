@@ -31,6 +31,16 @@ def test_export_pages_writes_minimal_stock_table(service, db_path: Path, tmp_pat
     assert "<title>Book Stock</title>" in html
     assert 'href="stock-summary.csv"' in html
     assert "Download CSV" in html
+    assert 'for="book-search"' in html
+    assert 'id="book-search"' in html
+    assert "Type to filter books with fuzzy matching." in html
+    assert 'id="search-status"' in html
+    assert "Showing all 4 books." in html
+    assert 'id="no-matches-row"' in html
+    assert 'data-book-row data-book-title="Archive Copy"' in html
+    assert 'data-book-row data-book-title="Comma, Quote &quot;Book&quot;"' in html
+    assert "function fuzzyScore" in html
+    assert 'searchInput.addEventListener("input", updateSearchResults);' in html
     assert "<th scope=\"col\">Book</th>" in html
     assert "<th scope=\"col\">Current Stock</th>" in html
     assert "Archive Copy" in html
@@ -57,11 +67,16 @@ def test_export_pages_writes_minimal_stock_table(service, db_path: Path, tmp_pat
 def test_export_pages_writes_csv_header_when_stock_is_empty(service, db_path: Path, tmp_path: Path):
     output_dir = tmp_path / "pages"
 
-    export_pages(db_path, output_dir)
+    output_path = export_pages(db_path, output_dir)
+    html = output_path.read_text(encoding="utf-8")
 
     csv_path = output_dir / CSV_FILENAME
     csv_rows = list(csv.reader(StringIO(csv_path.read_text(encoding="utf-8"))))
 
+    assert 'id="book-search"' in html
+    assert "No books available." in html
+    assert "No books found." in html
+    assert 'id="empty-stock-row"' in html
     assert csv_rows == [["Book", "Current Stock"]]
 
 

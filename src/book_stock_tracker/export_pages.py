@@ -48,8 +48,21 @@ def export_pages(database_path: Path, output_dir: Path) -> Path:
 def render_stock_page(stock_rows: list[StockSummary]) -> str:
     """Render the stock page HTML."""
     body_rows = "\n".join(_render_row(row) for row in stock_rows)
-    if not body_rows:
-        body_rows = '<tr><td colspan="2" class="empty-state">No books found.</td></tr>'
+    total_books = len(stock_rows)
+    if stock_rows:
+        empty_state_row = (
+            '        <tr id="no-matches-row" hidden>'
+            '<td colspan="2" class="empty-state">No matching books found.</td>'
+            "</tr>"
+        )
+        initial_status = f"Showing all {total_books} books."
+    else:
+        empty_state_row = (
+            '        <tr id="empty-stock-row">'
+            '<td colspan="2" class="empty-state">No books found.</td>'
+            "</tr>"
+        )
+        initial_status = "No books available."
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -95,11 +108,16 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
     }}
 
     .page-header {{
+      display: grid;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }}
+
+    .page-header-top {{
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 1rem;
-      margin-bottom: 1.5rem;
     }}
 
     .download-link {{
@@ -122,6 +140,49 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
     .download-link:hover,
     .download-link:focus-visible {{
       background: #4a3521;
+    }}
+
+    .search-panel {{
+      display: grid;
+      gap: 0.55rem;
+      padding: 1rem;
+      border: 1px solid rgba(91, 67, 43, 0.14);
+      border-radius: 16px;
+      background: rgba(255, 248, 237, 0.88);
+    }}
+
+    .search-label {{
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }}
+
+    .search-input {{
+      width: 100%;
+      padding: 0.85rem 1rem;
+      border: 1px solid rgba(91, 67, 43, 0.2);
+      border-radius: 12px;
+      background: #fffdf8;
+      color: inherit;
+      font: inherit;
+      font-size: 1rem;
+    }}
+
+    .search-input:focus-visible {{
+      outline: 2px solid rgba(91, 67, 43, 0.35);
+      outline-offset: 2px;
+    }}
+
+    .search-help,
+    .search-status {{
+      margin: 0;
+      font-size: 0.95rem;
+      color: rgba(31, 26, 22, 0.78);
+    }}
+
+    .search-status {{
+      font-weight: 600;
+      color: rgba(31, 26, 22, 0.88);
     }}
 
     table {{
@@ -162,7 +223,7 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
         padding: 1.25rem;
       }}
 
-      .page-header {{
+      .page-header-top {{
         align-items: stretch;
         flex-direction: column;
       }}
@@ -180,21 +241,137 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
 <body>
   <main>
     <div class="page-header">
-      <h1>{PAGE_TITLE}</h1>
-      <a class="download-link" href="{CSV_FILENAME}" download>Download CSV</a>
+      <div class="page-header-top">
+        <h1>{PAGE_TITLE}</h1>
+        <a class="download-link" href="{CSV_FILENAME}" download>Download CSV</a>
+      </div>
+      <div class="search-panel">
+        <label class="search-label" for="book-search">Search books</label>
+        <input
+          id="book-search"
+          class="search-input"
+          type="search"
+          placeholder="Try Krishna or bgi"
+          autocomplete="off"
+          spellcheck="false"
+          aria-describedby="search-help search-status"
+        >
+        <p class="search-help" id="search-help">Type to filter books with fuzzy matching.</p>
+        <p class="search-status" id="search-status" role="status" aria-live="polite">{initial_status}</p>
+      </div>
     </div>
-    <table>
+    <table id="stock-table">
       <thead>
         <tr>
           <th scope="col">Book</th>
           <th scope="col">Current Stock</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="stock-table-body">
         {body_rows}
+{empty_state_row}
       </tbody>
     </table>
   </main>
+  <script>
+    const searchInput = document.getElementById("book-search");
+    const statusElement = document.getElementById("search-status");
+    const noMatchesRow = document.getElementById("no-matches-row");
+    const bookRows = Array.from(document.querySelectorAll("[data-book-row]"));
+    const totalRows = bookRows.length;
+
+    function normalizeSearchValue(value) {{
+      return value.trim().toLowerCase();
+    }}
+
+    function fuzzyScore(query, candidate) {{
+      if (!query) {{
+        return 1;
+      }}
+
+      if (candidate === query) {{
+        return 1_000;
+      }}
+
+      const substringIndex = candidate.indexOf(query);
+      if (substringIndex !== -1) {{
+        return 500 - substringIndex;
+      }}
+
+      let score = 0;
+      let queryIndex = 0;
+      let candidateIndex = 0;
+      let consecutiveBonus = 0;
+      let lastMatchIndex = -1;
+
+      while (queryIndex < query.length && candidateIndex < candidate.length) {{
+        if (query[queryIndex] === candidate[candidateIndex]) {{
+          score += 10;
+          if (lastMatchIndex === candidateIndex - 1) {{
+            consecutiveBonus += 5;
+            score += consecutiveBonus;
+          }} else {{
+            consecutiveBonus = 0;
+          }}
+          lastMatchIndex = candidateIndex;
+          queryIndex += 1;
+        }}
+        candidateIndex += 1;
+      }}
+
+      if (queryIndex !== query.length) {{
+        return 0;
+      }}
+
+      return score - (candidate.length - query.length);
+    }}
+
+    function updateSearchResults() {{
+      const rawQuery = searchInput.value.trim();
+      const normalizedQuery = normalizeSearchValue(rawQuery);
+
+      if (!totalRows) {{
+        statusElement.textContent = "No books available.";
+        return;
+      }}
+
+      if (!normalizedQuery) {{
+        for (const row of bookRows) {{
+          row.hidden = false;
+        }}
+        if (noMatchesRow) {{
+          noMatchesRow.hidden = true;
+        }}
+        statusElement.textContent = `Showing all ${{totalRows}} books.`;
+        return;
+      }}
+
+      let visibleRows = 0;
+
+      for (const row of bookRows) {{
+        const candidate = normalizeSearchValue(row.dataset.bookTitle || "");
+        const matches = fuzzyScore(normalizedQuery, candidate) > 0;
+        row.hidden = !matches;
+        if (matches) {{
+          visibleRows += 1;
+        }}
+      }}
+
+      if (noMatchesRow) {{
+        noMatchesRow.hidden = visibleRows > 0;
+      }}
+
+      if (!visibleRows) {{
+        statusElement.textContent = `No matching books found for "${{rawQuery}}".`;
+        return;
+      }}
+
+      statusElement.textContent = `Showing ${{visibleRows}} of ${{totalRows}} books for "${{rawQuery}}".`;
+    }}
+
+    searchInput.addEventListener("input", updateSearchResults);
+    updateSearchResults();
+  </script>
 </body>
 </html>
 """
@@ -221,7 +398,7 @@ def _load_stock_summary(database_path: Path) -> list[StockSummary]:
 
 def _render_row(row: StockSummary) -> str:
     return (
-        "        <tr>"
+        f'        <tr data-book-row data-book-title="{escape(row.item_name)}">'
         f"<td>{escape(row.item_name)}</td>"
         f"<td>{row.current_stock}</td>"
         "</tr>"
