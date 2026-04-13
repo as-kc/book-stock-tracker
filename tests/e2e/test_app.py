@@ -155,7 +155,7 @@ async def test_edit_delete_and_restart_persist_against_same_database(db_path: Pa
         report_rows = table_rows(second_app.query_one("#report-table", DataTable))
 
     assert stock_rows_after_restart == [["beta", "0", "0", "0"]]
-    assert report_rows == [["2026-04-03", "New report"]]
+    assert report_rows == [[StockTrackerService.today_iso(), "New report"]]
 
 
 @pytest.mark.asyncio

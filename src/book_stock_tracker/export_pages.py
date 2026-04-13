@@ -173,7 +173,6 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
       outline-offset: 2px;
     }}
 
-    .search-help,
     .search-status {{
       margin: 0;
       font-size: 0.95rem;
@@ -251,12 +250,10 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
           id="book-search"
           class="search-input"
           type="search"
-          placeholder="Try Krishna or bgi"
           autocomplete="off"
           spellcheck="false"
-          aria-describedby="search-help search-status"
+          aria-describedby="search-status"
         >
-        <p class="search-help" id="search-help">Type to filter books with fuzzy matching.</p>
         <p class="search-status" id="search-status" role="status" aria-live="polite">{initial_status}</p>
       </div>
     </div>

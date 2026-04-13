@@ -33,7 +33,8 @@ def test_export_pages_writes_minimal_stock_table(service, db_path: Path, tmp_pat
     assert "Download CSV" in html
     assert 'for="book-search"' in html
     assert 'id="book-search"' in html
-    assert "Type to filter books with fuzzy matching." in html
+    assert 'aria-describedby="search-status"' in html
+    assert "placeholder=" not in html
     assert 'id="search-status"' in html
     assert "Showing all 4 books." in html
     assert 'id="no-matches-row"' in html
