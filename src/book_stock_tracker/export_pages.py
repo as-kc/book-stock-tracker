@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from html import escape
+from io import StringIO
 from pathlib import Path
 
 from .services import StockTrackerService
 from .storage import Database, StockSummary, StockTrackerRepository
 
 PAGE_TITLE = "Book Stock"
+CSV_FILENAME = "stock-summary.csv"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,12 +34,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def export_pages(database_path: Path, output_dir: Path) -> Path:
-    """Write a minimal static stock page and return the generated file path."""
+    """Write the static stock page assets and return the generated HTML path."""
     stock_rows = _load_stock_summary(database_path)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "index.html"
+    csv_path = output_dir / CSV_FILENAME
     output_path.write_text(render_stock_page(stock_rows), encoding="utf-8")
+    csv_path.write_text(render_stock_csv(stock_rows), encoding="utf-8", newline="")
     return output_path
 
 
@@ -83,10 +88,40 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
     }}
 
     h1 {{
-      margin: 0 0 1.5rem;
+      margin: 0;
       font-size: clamp(2rem, 4vw, 3rem);
       line-height: 1.1;
       letter-spacing: 0.02em;
+    }}
+
+    .page-header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }}
+
+    .download-link {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.75rem 1rem;
+      border-radius: 999px;
+      border: 1px solid rgba(91, 67, 43, 0.18);
+      background: #5b432b;
+      color: #fffaf2;
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      box-shadow: 0 10px 24px rgba(91, 67, 43, 0.16);
+    }}
+
+    .download-link:hover,
+    .download-link:focus-visible {{
+      background: #4a3521;
     }}
 
     table {{
@@ -127,6 +162,15 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
         padding: 1.25rem;
       }}
 
+      .page-header {{
+        align-items: stretch;
+        flex-direction: column;
+      }}
+
+      .download-link {{
+        width: 100%;
+      }}
+
       table {{
         font-size: 0.98rem;
       }}
@@ -135,7 +179,10 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
 </head>
 <body>
   <main>
-    <h1>{PAGE_TITLE}</h1>
+    <div class="page-header">
+      <h1>{PAGE_TITLE}</h1>
+      <a class="download-link" href="{CSV_FILENAME}" download>Download CSV</a>
+    </div>
     <table>
       <thead>
         <tr>
@@ -151,6 +198,16 @@ def render_stock_page(stock_rows: list[StockSummary]) -> str:
 </body>
 </html>
 """
+
+
+def render_stock_csv(stock_rows: list[StockSummary]) -> str:
+    """Render the stock page CSV."""
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["Book", "Current Stock"])
+    for row in stock_rows:
+        writer.writerow([row.item_name, row.current_stock])
+    return buffer.getvalue()
 
 
 def _load_stock_summary(database_path: Path) -> list[StockSummary]:

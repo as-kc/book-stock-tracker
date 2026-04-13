@@ -18,6 +18,8 @@ uv run book-stock-tracker --database stock-tracker.db
 
 The repository's GitHub Pages site is built from the committed `stock-tracker.db` file and publishes a read-only view of the current stock.
 
+Published site: [https://as-kc.github.io/book-stock-tracker/](https://as-kc.github.io/book-stock-tracker/)
+
 Generate the static site locally with:
 
 ```bash
